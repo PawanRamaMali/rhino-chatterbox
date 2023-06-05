@@ -2,8 +2,9 @@ box::use(
   shiny[bootstrapPage, div, moduleServer, NS, renderUI, tags,
         uiOutput, fluidRow, column, h2, h5, br, hr, htmlOutput,
         verbatimTextOutput, textOutput, textInput, actionButton,
-        reactiveValues, observeEvent, renderText, tagList, ],
-  shinyjs[useShinyjs, extendShinyjs,],
+        reactiveValues, observeEvent, renderText, tagList, fluidPage,
+        isolate,],
+  shinyjs[useShinyjs, extendShinyjs, ],
   shinyalert[useShinyalert, shinyalert,],
   tidyverse[...],
   shinythemes[shinytheme,],
@@ -14,7 +15,7 @@ jQuery(document).ready(function(){
   jQuery('#text_msg').keypress(function(evt){
     if (evt.keyCode == 13){
       // Enter, simulate clicking send
-      jQuery('#send').click();
+      jQuery('#app-send').click();
       jQuery('#text_msg').html('hihihi');
     }
   });
@@ -23,7 +24,7 @@ jQuery(document).ready(function(){
 // auto scroll to bottom
 var oldContent = null;
 window.setInterval(function() {
-  var elem = document.getElementById('chat_window');
+  var elem = document.getElementById('app-chat_window');
   if (oldContent != elem.innerHTML){
     scrollToBottom();
   }
@@ -32,15 +33,35 @@ window.setInterval(function() {
 
 // Scroll to the bottom of the chat window.
 function scrollToBottom(){
-  var elem = document.getElementById('chat_window');
+  var elem = document.getElementById('app-chat_window');
   elem.scrollTop = elem.scrollHeight;
 }"
+
+intro <- "
+##      ## ######## ##        ######   #######  ##     ## ########
+##  ##  ## ##       ##       ##    ## ##     ## ###   ### ##
+##  ##  ## ##       ##       ##       ##     ## #### #### ##
+##  ##  ## ######   ##       ##       ##     ## ## ### ## ######
+##  ##  ## ##       ##       ##       ##     ## ##     ## ##
+##  ##  ## ##       ##       ##    ## ##     ## ##     ## ##
+ ###  ###  ######## ########  ######   #######  ##     ## ########
+"
+
+val <- reactiveValues(txt = NULL, users = c(), new_usr = NULL, usr_left = NULL)
+
+if (file.exists("chat_txt.Rds")) {
+  val$txt <- readRDS("chat_txt.Rds")
+} else {
+  val$txt <- intro
+}
 
 #' @export
 ui <- function(id) {
   ns <- NS(id)
-  bootstrapPage(
+  fluidPage(
     theme = shinytheme("superhero"),
+    shinyjs::useShinyjs(),
+    useShinyalert(),
     tags$head(
       tags$link(rel = "stylesheet", type = "text/css", href = "style.css")
     ),
@@ -54,9 +75,9 @@ ui <- function(id) {
       fluidRow(
         column(
           width = 9,
-          verbatimTextOutput("chat_window"),
+          verbatimTextOutput(ns("chat_window")),
           tags$head(tags$style("")),
-          uiOutput("notify")
+          uiOutput(ns("notify"))
         ),
         column(width = 3, h5("Active Users"), hr(), textOutput("users"))
       )
@@ -80,17 +101,11 @@ ui <- function(id) {
 
 #' @export
 server <- function(id) {
-  moduleServer(id, function(input, output, session) {
-    val <- reactiveValues(
-      txt = if (file.exists("chat_txt.Rds")) readRDS("chat_txt.Rds") else intro,
-      users = c(),
-      new_usr = NULL,
-      usr_left = NULL
-    )
 
+  moduleServer(id, function(input, output, session) {
     # renaming your user name ----
     observeEvent("", {
-      username <- paste0("Username : X")
+      username <- paste0("Username")
       shinyalert(
         inputId = "username",
         "Welcome to Anonymous Chat",
@@ -124,28 +139,47 @@ server <- function(id) {
 
     # sending msg ----
     observeEvent(input$send, {
-
       # if the txt msg is empty
       if (input$text_msg == "") {
         shinyalert(
-          "Oops!", "Can't send a blank message",
-          type = "error", closeOnEsc = TRUE,
-          timer = 3000, closeOnClickOutside = TRUE,
-          showCancelButton = FALSE, showConfirmButton = TRUE
+          "Oops!",
+          "Can't send a blank message",
+          type = "error",
+          closeOnEsc = TRUE,
+          timer = 3000,
+          closeOnClickOutside = TRUE,
+          showCancelButton = FALSE,
+          showConfirmButton = TRUE
         )
       } else {
         if (object.size(val$txt) > 50000) {
           val$txt <- intro
         }
-        new <- paste(Sys.time(), "#", input$uname, ":", input$text_msg)
+        new <-
+          paste(Sys.time(), "#", input$uname, ":", input$text_msg)
 
         val$txt <- paste(val$txt, new, sep = '\n')
 
         updateTextInput(session, "text_msg", value = "")
+
         saveRDS(val$txt, "chat_txt.Rds")
       }
-      saveRDS(val$txt, "chat_txt.Rds")
     })
 
+    output$chat_window <- renderText({
+      val$txt
+    })
+    # ----
+
+    # update the active user list on exit ----
+    session$onSessionEnded(function() {
+      isolate({
+        val$users <- val$users[val$users != input$uname]
+        usr_left <- paste0("User: ", input$uname, " left the room")
+        print(usr_left)
+        print(val$users)
+      })
+    })
+    # ----
   })
 }
